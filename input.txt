@@ -1,0 +1,12 @@
+.data
+         num DWORD 10
+key DWORD 0101b
+result DWORD 0
+
+.code
+    mov eax, num
+mov ebx, key
+xor eax, ebx
+mov result, eax
+
+
