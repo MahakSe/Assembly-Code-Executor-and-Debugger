@@ -16,7 +16,7 @@ instructions = {
     "XCHG": {"operandsNumber": 2, "same_size": True},
     "MOVSX": {"operandsNumber": 2, "same_size": False},
     "MOVZX": {"operandsNumber": 2, "same_size": False},
-    "POP": {"operandsNumber": 0, "same_size": None},
+    "POP": {"operandsNumber": 1, "same_size": None},
     "PUSH": {"operandsNumber": 1, "same_size": None},
     "CMP": {"operandsNumber": 2, "same_size": True},
     "JMP": {"operandsNumber": 1, "same_size": None},
@@ -83,7 +83,7 @@ REGISTERS = {"EAX": "00000000", "EBX": "00000000", "ECX": "00000000", "EDX": "00
              "ESP": "00000000", "ESI": "00000000", "EDI": "00000000"}
 FLAGS = {"carry": 0, "overflow": 0, "sign": 0, "parity": 0, "auxiliary": 0, "zero": 0}
 runtime_stack = []
-top = "FFFF"
+top = -1
 
 
 def hex_to_binary(hex_str):
@@ -209,16 +209,16 @@ def parse_values(input_str, data_type):
                     return result, None
                 parts[i] = result
 
-        elif part[-1] == 'h':
-            base = "h"
-            error2, res = to_ten(part[0:-1], base)
-            if error2:
-                return res, None
-            error, result = to_binary(res, data_type)
-            if not error:
-                parts[i] = result
-            else:
-                return result, None
+            elif part[-1] == 'h':
+                base = "h"
+                error2, res = to_ten(part[0:-1], base)
+                if error2:
+                    return res, None
+                error, result = to_binary(res, data_type)
+                if not error:
+                    parts[i] = result
+                else:
+                    return result, None
         i += 1
 
     return None, parts
@@ -264,6 +264,74 @@ def contains_alphabet(s):
     return any(char.isalpha() for char in s) and not s[0:-1].isdigit()
 
 
+def get_value_by_address(datas, address):
+    if address.upper() in REGISTERS.keys():
+        err, address = to_ten(REGISTERS[address.upper()], 'h')
+    for data in datas:
+        if data["address"] == address:
+            return data["values"][0]
+    if len(datas) > 1:
+        for i in range(len(datas) - 1):
+            if int(datas[i]["address"]) < address < int(datas[i + 1]["address"]):
+                temp_address = datas[i]["address"]
+                for value in datas[i]["values"]:
+                    if temp_address == address:
+                        return value
+                    temp_address = temp_address + (datas[i]["type"] / 8)
+    else:
+        for i in range(len(datas)):
+            temp_address = datas[i]["address"]
+            for value in datas[i]["values"]:
+                if temp_address == address:
+                    return value
+                temp_address = temp_address + (datas[i]["type"] / 8)
+    raise ValueError("Invalid address!")
+
+
+def parse_operands(data, parts):
+    operands_str = parts[1]
+    # Split the operands by comma and strip any extra whitespace
+    operands = [operand.strip() for operand in operands_str.split(",")]
+
+    i = 0
+    for operand in operands:
+        if not is_number(operand) and operand.upper() in registers.keys():
+            operands[i] = operand.upper()
+        if i == 1:
+            temp = operands[1].split(maxsplit=1)
+            if temp[0].upper() == "LENGTHOF":
+                index = get_name_index(data, temp[1])
+                res = 0
+                for value in data[index]["values"]:
+                    if contains_alphabet(value):
+                        res += len(value) - 2
+                    else:
+                        res += 1
+                operands[i] = str(res)
+            elif temp[0].upper() == "SIZEOF":
+                index = get_name_index(data, temp[1])
+                res = 0
+                for value in data[index]["values"]:
+                    if contains_alphabet(value):
+                        res += len(value) - 2
+                    else:
+                        res += 1
+                operands[i] = str(data[index]["type"] * res)
+            elif temp[0].upper() == "OFFSET":
+                index = get_name_index(data, temp[1])
+                operands[i] = str(data[index]["address"])
+
+            elif temp[0][0] == '[' and temp[0][-1] == ']':
+                if temp[0][1:-1].upper() in REGISTERS.keys():
+                    operands[i] = '[' + temp[0][1:-1].upper() + ']'
+                else:
+                    operands[i] = temp[0]
+
+        i += 1
+
+    return operands
+
+
 def parse_instruction(instruction, address, data):
     # Split the instruction into its components
     parts = instruction.split(maxsplit=1)
@@ -273,69 +341,12 @@ def parse_instruction(instruction, address, data):
         label = parts[0][:-1]
         parts2 = parts[1].split(maxsplit=1)
         name = parts2[0].upper()
-        operands_str = parts2[1]
-        # Split the operands by comma and strip any extra whitespace
-        operands = [operand.strip() for operand in operands_str.split(",")]
-
-        i = 0
-        for operand in operands:
-            if not is_number(operand) and operand.upper() in registers.keys():
-                operands[i] = operand.upper()
-            if i == 1:
-                temp = operands[1].split(maxsplit=1)
-                if temp[0].upper() == "LENGTHOF":
-                    index = get_name_index(data, temp[1])
-                    res = 0
-                    for value in data[index]["values"]:
-                        if contains_alphabet(value):
-                            res += len(value) - 2
-                        else:
-                            res += 1
-                    operands[i] = str(res)
-                elif temp[0].upper() == "SIZEOF":
-                    index = get_name_index(data, temp[1])
-                    res = 0
-                    for value in data[index]["values"]:
-                        if contains_alphabet(value):
-                            res += len(value) - 2
-                        else:
-                            res += 1
-
-                    operands[i] = str(data[index]["type"] * res)
-            i += 1
+        operands = parse_operands(data, parts)
 
     else:
         name = parts[0].upper()
         if len(parts) > 1:
-            operands_str = parts[1]
-            # Split the operands by comma and strip any extra whitespace
-            operands = [operand.strip() for operand in operands_str.split(",")]
-
-            i = 0
-            for operand in operands:
-                if not is_number(operand) and operand.upper() in registers.keys():
-                    operands[i] = operand.upper()
-                if i == 1:
-                    temp = operands[1].split(maxsplit=1)
-                    if temp[0].upper() == "LENGTHOF":
-                        index = get_name_index(data, temp[1])
-                        res = 0
-                        for value in data[index]["values"]:
-                            if contains_alphabet(value):
-                                res += len(value) -2
-                            else:
-                                res += 1
-                        operands[i] = str(res)
-                    elif temp[0].upper() == "SIZEOF":
-                        index = get_name_index(data, temp[1])
-                        res = 0
-                        for value in data[index]["values"]:
-                            if contains_alphabet(value):
-                                res += len(value) - 2
-                            else:
-                                res += 1
-                        operands[i] = str(data[index]["type"] * res)
-                i += 1
+            operands = parse_operands(data, parts)
         else:
             operands = None
 
@@ -525,6 +536,16 @@ def parse_op_dest(op, data):
 
     else:
         is_imm = True
+        capacity = 32
+        if op[-1] == 'h' or op[-1] == 'H':
+            result = hex_to_binary(op[:-1]).zfill(32)
+        elif op[-1] == 'q' or op[-1] == 'o' or op[-1] == 'Q' or op[-1] == 'O':
+            result = to_ten(op[:-1], 'o')
+            result = to_binary(result, 32)
+        elif op[-1] == 'b' or op[-1] == 'B':
+            result = op[:-1].zfill(32)
+        else:
+            error, result = to_binary(op, 32)
 
     return result, is_reg, is_imm, is_mem, capacity
 
@@ -547,7 +568,11 @@ def parse_op_source(op, data, capacity):
     elif check_name_exists(data, op):
         index = get_name_index(data, op)
         result = data[index]["values"][0]
-    else:  # immediate (hex decimal(negative or positive) binary octal)
+    else:
+        if op[0] == '[' and op[-1] == ']':
+            op = get_value_by_address(data, op[1:-1])
+            return op
+        # immediate (hex decimal(negative or positive) binary octal)
         if op.isdigit() or op[1:].isdigit():
             error, result = to_binary(op, capacity)
         elif op[0:-1].isdigit() and op[-1] != 'h':
@@ -714,7 +739,7 @@ def mov(operands, data):
             temp = REGISTERS[reg][0:4] + binary_to_hex(result)
             REGISTERS[reg] = temp
         else:
-            REGISTERS[op1] = binary_to_hex(result)
+            REGISTERS[op1] = binary_to_hex(result).zfill(8)
     else:
         data[index]["values"][0] = result
 
@@ -961,42 +986,47 @@ def decimal_to_hex(decimal_int, capacity):
 
 
 def push(operands, data):
-    global top
     global runtime_stack
+    global top
     op1 = operands[0]
     result, is_reg, is_imm, is_mem, capacity = parse_op_dest(op1, data)
     if capacity == 8:
         return "instruction formats for push is not correct!", None
     if is_imm and capacity != 32:
         return "instruction formats for push is not correct!", None
-    if top == "0000":
+    if top == 10000:
         return "stack is full!", None
+
     value = binary_to_hex(result)
+    if REGISTERS["ESP"] == "00000000":
+        REGISTERS["ESP"] = "FFFFFFFF"
+    else:
+        err, res2 = to_ten(REGISTERS["ESP"], 'h')
+        REGISTERS["ESP"] = decimal_to_hex(res2 - capacity // 8, 8).upper()
+    top += 1
     entry = {
-        "address": top,
-        "value": value.zfill(capacity)
+        "address": REGISTERS["ESP"],
+        "value": value
     }
-    
-    err, res2 = (to_ten(top, 'h'))
-    top = decimal_to_hex(res2 - capacity // 8, capacity // 8)
-    
+
     runtime_stack.append(entry)
     return None, data
 
 
 def pop(operands, data):
-    global top
     global runtime_stack
+    global top
     op1 = operands[0]
     result, is_reg, is_imm, is_mem, capacity = parse_op_dest(op1, data)
     if capacity == 8:
         return "instruction formats for pop is not correct!", None
     if is_imm:
         return "instruction formats for push is not correct!", None
-    if top == "FFFF":
+    if top == -1:
         return "stack is empty!", None
 
-    popped_elem = runtime_stack[top]
+    popped_elem = runtime_stack[-1]["value"]
+
     if is_reg:
         if capacity == 16:
             temp_reg = registers[op1][1]
@@ -1008,9 +1038,17 @@ def pop(operands, data):
         err, temp = hex_to_binary(popped_elem).zfill(capacity)
         data[index]["values"][0] = temp
 
-    err, res2 = (to_ten(top, 'h'))
-    top = decimal_to_hex(res2 + capacity // 8, capacity // 8)
+    if REGISTERS["ESP"] == "FFFFFFFF":
+        REGISTERS["ESP"] = "00000000"
+    else:
+        err, res2 = (to_ten(REGISTERS["ESP"], 'h'))
+        if err:
+            return err, None
+        REGISTERS["ESP"] = decimal_to_hex(res2 + capacity // 8, 8)
 
+    top -= 1
+
+    del runtime_stack[-1]
     return None, data
 
 
@@ -1286,7 +1324,7 @@ def main():
             data_seg.append(line)
 
     error, data = parse_data(data_seg)
-    if data is None:
+    if error is not None:
         print(error)
         return
     error, code = parse_code(code_seg, data)
@@ -1297,7 +1335,8 @@ def main():
     lines = []
     memory = []
     left_op = right_op = None
-
+    for line in data:
+        print(line)
     i = 0
     line = code[i]
 
@@ -1317,10 +1356,11 @@ def main():
                 left_op, is_reg, is_imm, is_mem, capacity = parse_op_dest(line["operands"][0], data)
                 right_op = parse_op_source(line["operands"][1], data, capacity)
             error, data = perform(line, data)
-            memory = memory_change(data)
-            if data is None:
+            if error is not None:
                 print(error)
                 return
+            memory = memory_change(data)
+
             lines.append(
                 {"line_num": line["address"] + 1, "regs": copy.deepcopy(REGISTERS), "flags": copy.deepcopy(FLAGS),
                  "memory": memory, "stack": copy.deepcopy(runtime_stack)}
@@ -1429,6 +1469,7 @@ def main():
 
         else:
             break
+
 
 if __name__ == "__main__":
     main()
