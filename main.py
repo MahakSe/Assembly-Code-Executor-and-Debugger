@@ -1,6 +1,4 @@
-import ast
 import copy
-import sys
 
 data_types = {"BYTE": 8, "WORD": 16, "DWORD": 32, "SBYTE": 8, "SWORD": 16, "SDWORD": 32}
 instructions = {
@@ -344,6 +342,10 @@ def parse_instruction(instruction, address, data):
         operands = parse_operands(data, parts)
 
     else:
+        if ':' in parts[0]:
+            lineParts = parts[0].split(':')
+            label = lineParts[0]
+            parts[0] = lineParts[1]
         name = parts[0].upper()
         if len(parts) > 1:
             operands = parse_operands(data, parts)
@@ -386,7 +388,7 @@ def parse_code(code_seg, data):
         if parts[0][-1] == ":" and len(parts) == 1:  # code label can be on a line by itself
             entry = parse_label(line, address)
         else:
-            entry = parse_instruction(line, address, data)
+             entry = parse_instruction(line, address, data)
         if not entry["name"] and not entry["label"]:
             continue
 
@@ -1030,9 +1032,9 @@ def pop(operands, data):
     if is_reg:
         if capacity == 16:
             temp_reg = registers[op1][1]
-            REGISTERS[temp_reg] = REGISTERS[temp_reg][:4] + popped_elem.zfill(capacity)
+            REGISTERS[temp_reg] = REGISTERS[temp_reg][:4] + popped_elem.zfill(capacity // 8)
         else:
-            REGISTERS[op1] = popped_elem.zfill(capacity)
+            REGISTERS[op1] = popped_elem.zfill(capacity // 8)
     if is_mem:
         index = get_name_index(data, op1)
         err, temp = hex_to_binary(popped_elem).zfill(capacity)
@@ -1055,7 +1057,8 @@ def pop(operands, data):
 def loop(line, code):
     is_loop = is_taken = False
     jumped_line = 0
-
+    if line["name"] is None:
+        return False, False, None
     if line["name"].upper() == 'LOOP':
         is_loop = True
         if REGISTERS["ECX"] != "00000000":
@@ -1171,7 +1174,9 @@ def jump(line, code, left_op, right_op):
     is_taken = True
     i = -1
 
-    # Jumps Based on Specific Flags
+    # Jumps Based on Specific Flags\
+    if line["name"] is None:
+        return False, False, None
     if line["name"].upper() == "JMP":
         i = search_for_label(line["operands"][0], code)
     elif line["name"].upper() == "JZ":
@@ -1335,8 +1340,7 @@ def main():
     lines = []
     memory = []
     left_op = right_op = None
-    for line in data:
-        print(line)
+
     i = 0
     line = code[i]
 
@@ -1401,7 +1405,7 @@ def main():
                 print(lines[len(lines) - 1]["flags"])
 
         elif option == 2:
-            print("1: See registers after a specific\n2: See final registers")
+            print("1: See registers after a specific line\n2: See final registers")
             option2 = int(input().strip())
             if option2 == 1:
                 seen = False
